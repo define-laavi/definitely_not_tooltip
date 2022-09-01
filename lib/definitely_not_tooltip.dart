@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -26,11 +25,8 @@ class DNTooltip extends StatefulWidget {
     this.verticalOffset,
     this.horizontalOffset,
     this.preferedLocation,
-    this.excludeFromSemantics,
     this.decoration,
     this.waitDuration,
-    this.triggerMode,
-    this.enableFeedback,
     this.onTriggered,
     this.child,
   });
@@ -48,17 +44,11 @@ class DNTooltip extends StatefulWidget {
 
   final TooltipLocation? preferedLocation;
 
-  final bool? excludeFromSemantics;
-
   final Widget? child;
 
   final Decoration? decoration;
 
   final Duration? waitDuration;
-
-  final TooltipTriggerMode? triggerMode;
-
-  final bool? enableFeedback;
 
   final TooltipTriggeredCallback? onTriggered;
 
@@ -103,16 +93,9 @@ class DNTooltipState extends State<DNTooltip>
   static const double _defaultVerticalOffset = 24.0;
   static const EdgeInsetsGeometry _defaultMargin = EdgeInsets.zero;
   static const Duration _fadeInDuration = Duration(milliseconds: 150);
-  static const Duration _fadeOutDuration = Duration(milliseconds: 75);
-  static const Duration _defaultShowDuration = Duration(milliseconds: 1500);
+  static const Duration _fadeOutDuration = Duration(milliseconds: 150);
   static const Duration _defaultHoverShowDuration = Duration(milliseconds: 100);
   static const Duration _defaultWaitDuration = Duration.zero;
-  static const bool _defaultExcludeFromSemantics = false;
-  static const TooltipTriggerMode _defaultTriggerMode =
-      TooltipTriggerMode.longPress;
-  static const bool _defaultEnableFeedback = true;
-  static const TextAlign _defaultTextAlign = TextAlign.start;
-
   late Widget _content;
   late double _height;
   late EdgeInsetsGeometry _padding;
@@ -121,7 +104,6 @@ class DNTooltipState extends State<DNTooltip>
   late double _verticalOffset;
   late double _horizontalOffset;
   late TooltipLocation _preferedLocation;
-  late bool _excludeFromSemantics;
   late AnimationController _controller;
   OverlayEntry? _entry;
   Timer? _dismissTimer;
@@ -131,8 +113,6 @@ class DNTooltipState extends State<DNTooltip>
   late Duration _waitDuration;
   late bool _mouseIsConnected;
   bool _pressActivated = false;
-  late TooltipTriggerMode _triggerMode;
-  late bool _enableFeedback;
   late bool _isConcealed;
   late bool _forceRemoval;
   late bool _visible;
@@ -148,12 +128,8 @@ class DNTooltipState extends State<DNTooltip>
       reverseDuration: _fadeOutDuration,
       vsync: this,
     )..addStatusListener(_handleStatusChanged);
-    // Listen to see when a mouse is added.
     RendererBinding.instance.mouseTracker
         .addListener(_handleMouseTrackerChange);
-    // Listen to global pointer events so that we can hide a tooltip immediately
-    // if some other control is clicked on.
-    GestureBinding.instance.pointerRouter.addGlobalRoute(_handlePointerEvent);
   }
 
   @override
@@ -162,7 +138,6 @@ class DNTooltipState extends State<DNTooltip>
     _visible = TooltipVisibility.of(context);
   }
 
-  // https://material.io/components/tooltips#specs
   double _getDefaultTooltipHeight() {
     final ThemeData theme = Theme.of(context);
     switch (theme.platform) {
@@ -188,20 +163,6 @@ class DNTooltipState extends State<DNTooltip>
       case TargetPlatform.fuchsia:
       case TargetPlatform.iOS:
         return const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0);
-    }
-  }
-
-  double _getDefaultFontSize() {
-    final ThemeData theme = Theme.of(context);
-    switch (theme.platform) {
-      case TargetPlatform.macOS:
-      case TargetPlatform.linux:
-      case TargetPlatform.windows:
-        return 12.0;
-      case TargetPlatform.android:
-      case TargetPlatform.fuchsia:
-      case TargetPlatform.iOS:
-        return 14.0;
     }
   }
 
@@ -402,17 +363,6 @@ class DNTooltipState extends State<DNTooltip>
     }
   }
 
-  void _handlePointerEvent(PointerEvent event) {
-    if (_entry == null) {
-      return;
-    }
-    if (event is PointerUpEvent || event is PointerCancelEvent) {
-      _handleMouseExit();
-    } else if (event is PointerDownEvent) {
-      _handleMouseExit(immediately: true);
-    }
-  }
-
   @override
   void deactivate() {
     if (_entry != null) {
@@ -424,8 +374,6 @@ class DNTooltipState extends State<DNTooltip>
 
   @override
   void dispose() {
-    GestureBinding.instance.pointerRouter
-        .removeGlobalRoute(_handlePointerEvent);
     RendererBinding.instance.mouseTracker
         .removeListener(_handleMouseTrackerChange);
     _removeEntry();
@@ -433,45 +381,18 @@ class DNTooltipState extends State<DNTooltip>
     super.dispose();
   }
 
-  void _handlePress() {
-    _pressActivated = true;
-    final bool tooltipCreated = ensureTooltipVisible();
-    if (tooltipCreated && _enableFeedback) {
-      if (_triggerMode == TooltipTriggerMode.longPress) {
-        Feedback.forLongPress(context);
-      } else {
-        Feedback.forTap(context);
-      }
-    }
-    widget.onTriggered?.call();
-  }
-
-  void _handleTap() {
-    _handlePress();
-    _handleMouseExit();
-  }
-
   @override
   Widget build(BuildContext context) {
     assert(Overlay.of(context, debugRequiredFor: widget) != null);
     final ThemeData theme = Theme.of(context);
     final TooltipThemeData tooltipTheme = TooltipTheme.of(context);
-    final TextStyle defaultTextStyle;
     final BoxDecoration defaultDecoration;
     if (theme.brightness == Brightness.dark) {
-      defaultTextStyle = theme.textTheme.bodyText2!.copyWith(
-        color: Colors.black,
-        fontSize: _getDefaultFontSize(),
-      );
       defaultDecoration = BoxDecoration(
         color: Colors.white.withOpacity(0.9),
         borderRadius: const BorderRadius.all(Radius.circular(4)),
       );
     } else {
-      defaultTextStyle = theme.textTheme.bodyText2!.copyWith(
-        color: Colors.white,
-        fontSize: _getDefaultFontSize(),
-      );
       defaultDecoration = BoxDecoration(
         color: Colors.grey[700]!.withOpacity(0.9),
         borderRadius: const BorderRadius.all(Radius.circular(4)),
@@ -487,9 +408,6 @@ class DNTooltipState extends State<DNTooltip>
         tooltipTheme.verticalOffset ??
         _defaultVerticalOffset;
     _horizontalOffset = widget.horizontalOffset ?? 0;
-    _excludeFromSemantics = widget.excludeFromSemantics ??
-        tooltipTheme.excludeFromSemantics ??
-        _defaultExcludeFromSemantics;
     _preferedLocation = widget.preferedLocation ?? TooltipLocation.bottom;
     _decoration =
         widget.decoration ?? tooltipTheme.decoration ?? defaultDecoration;
@@ -497,11 +415,6 @@ class DNTooltipState extends State<DNTooltip>
         tooltipTheme.waitDuration ??
         _defaultWaitDuration;
     _hoverShowDuration = _defaultHoverShowDuration;
-    _triggerMode =
-        widget.triggerMode ?? tooltipTheme.triggerMode ?? _defaultTriggerMode;
-    _enableFeedback = widget.enableFeedback ??
-        tooltipTheme.enableFeedback ??
-        _defaultEnableFeedback;
 
     Widget result = Semantics(
       tooltip: null,
@@ -510,23 +423,11 @@ class DNTooltipState extends State<DNTooltip>
 
     // Only check for gestures if tooltip should be visible.
     if (_visible) {
-      result = GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onLongPress: (_triggerMode == TooltipTriggerMode.longPress)
-            ? _handlePress
-            : null,
-        onTap: (_triggerMode == TooltipTriggerMode.tap) ? _handleTap : null,
-        excludeFromSemantics: true,
+      result = MouseRegion(
+        onEnter: (_) => _handleMouseEnter(),
+        onExit: (_) => _handleMouseExit(),
         child: result,
       );
-      // Only check for hovering if there is a mouse connected.
-      if (_mouseIsConnected) {
-        result = MouseRegion(
-          onEnter: (_) => _handleMouseEnter(),
-          onExit: (_) => _handleMouseExit(),
-          child: result,
-        );
-      }
     }
 
     return result;
